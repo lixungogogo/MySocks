@@ -1,0 +1,106 @@
+看了看RFC1928文档.大概整理出了socks5服务器处理TCP请求的流程 2006-02-18 20:33:03
+
+分类：
+
+socks5连接建立的时候首先由客户端发出如下格式数据给服务端:
+                   +----+----------+----------+
+                   |VER | NMETHODS | METHODS  |
+                   +----+----------+----------+
+                   | 1  |    1     | 1 to 255 |
+                   +----+----------+----------+
+在SOCKS5中VER字节总是0x05代表socks5,NMETHODS存放客户端可以接受的认证方法数量n,后面的n个字节就是各个方法对应的编号了.
+
+收到客户端发出的请求后,服务端做出回应.
+                         +----+--------+
+                         |VER | METHOD |
+                         +----+--------+
+                         | 1  |   1    |
+                         +----+--------+
+其中验证方法对应的编号如下:
+          o  X'00' NO AUTHENTICATION REQUIRED
+          o  X'01' GSSAPI
+          o  X'02' USERNAME/PASSWORD
+          o  X'03' to X'7F' IANA ASSIGNED
+          o  X'80' to X'FE' RESERVED FOR PRIVATE METHODS
+          o  X'FF' NO ACCEPTABLE METHODS
+
+客户端接受到如此回应后就可以开始与服务端进行验证了.在此0x02号代表的用户名密码验证方式在RFC1929文档中有介绍.我先不管验证.先实
+
+现匿名socks5代理.以后再考虑添加验证功能.
+
+验证完毕后,客户端就可以开始提出要求了.到底要socks5代理为它做什么.
+请求数据包的格式如下:
+
+        +----+-----+-------+------+----------+----------+
+        |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+        +----+-----+-------+------+----------+----------+
+        | 1  |  1  | X'00' |  1   | Variable |    2     |
+        +----+-----+-------+------+----------+----------+
+
+各字节代表的意义
+          o  VER    protocol version: X'05'
+          o  CMD
+             o  CONNECT X'01'
+             o  BIND X'02'
+             o  UDP ASSOCIATE X'03'
+          o  RSV    RESERVED
+          o  ATYP   address type of following address
+             o  IP V4 address: X'01'
+             o  DOMAINNAME: X'03'
+             o  IP V6 address: X'04'
+          o  DST.ADDR       desired destination address
+          o  DST.PORT desired destination port in network octet
+             order
+
+这里的目标地址可以有三种格式(IPV4 IP,域名,IPV6 IP)
+其中IPV4,IPV6地址固定长度分别为4字节,16字节.
+域名以pascal字符串保存:第一字节为字符串长度,后面跟字符串内容.
+
+收到客户端的请求后,服务端开始回应
+
+        +----+-----+-------+------+----------+----------+
+        |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+        +----+-----+-------+------+----------+----------+
+        | 1  |  1  | X'00' |  1   | Variable |    2     |
+        +----+-----+-------+------+----------+----------+
+
+     Where:
+
+          o  VER    protocol version: X'05'
+          o  REP    Reply field:
+             o  X'00' succeeded
+             o  X'01' general SOCKS server failure
+             o  X'02' connection not allowed by ruleset
+             o  X'03' Network unreachable
+             o  X'04' Host unreachable
+             o  X'05' Connection refused
+             o  X'06' TTL expired
+             o  X'07' Command not supported
+             o  X'08' Address type not supported
+             o  X'09' to X'FF' unassigned
+          o  RSV    RESERVED
+          o  ATYP   address type of following address
+
+
+             o  IP V4 address: X'01'
+             o  DOMAINNAME: X'03'
+             o  IP V6 address: X'04'
+          o  BND.ADDR       server bound address
+          o  BND.PORT       server bound port in network octet order
+
+   Fields marked RESERVED (RSV) must be set to X'00'.
+
+对应客户端的3种不同要求:
+
+针对CONNECT请求的回复:
+
+   BND.PORT里面保存的是服务端连接到远程服务器所分配的端口,BND.ADDR保存的是分配的IP地址.(这里socks5为什么这么做我还有点不清楚,
+
+不过不管它,先实现再说,以后在看看socks5 proxy client那边是怎么利用的.)
+
+针对BIND请求的回复:
+    服务端将两次回复客户端.第一次回复是在服务端开启新的socket并开启一个端口侦听后.BND.PORT存放服务端侦听的端口.BND.ADDR存放IP
+
+地址.客户端一般会利用这段信息来告诉远端服务器.第二次回复是用来表明远端服务器连接成功.BND.PORT和BND.ADDR分别存放远端服务器连接
+
+用的端口及IP.
